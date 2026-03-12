@@ -1,0 +1,90 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Fields: uid, email, displayName, role, createdAt
+    //
+    // Collection: subjects
+    // Fields: code, name, description, credits, capacity, registeredCount
+    //
+    // Collection: registrations
+    // Fields: studentId, studentName, subjectId, subjectCode, subjectName, timestamp, status
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && 
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+         (request.auth.token.email == "tomyagung@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'role']) &&
+             data.uid == request.auth.uid &&
+             data.email is string && data.email.size() < 100 && isValidEmail(data.email) &&
+             data.role in ['student', 'admin'] &&
+             (!('displayName' in data) || (data.displayName is string && data.displayName.size() < 100));
+    }
+
+    function isValidSubject(data) {
+      return data.keys().hasAll(['code', 'name', 'credits', 'capacity']) &&
+             data.code is string && data.code.size() > 0 && data.code.size() < 20 &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             (!('description' in data) || (data.description is string && data.description.size() < 1000)) &&
+             data.credits is number && data.credits > 0 && data.credits < 20 &&
+             data.capacity is number && data.capacity >= 0 && data.capacity < 1000 &&
+             (!('registeredCount' in data) || (data.registeredCount is number && data.registeredCount >= 0));
+    }
+
+    function isValidRegistration(data) {
+      return data.keys().hasAll(['studentId', 'subjectId', 'status']) &&
+             data.studentId is string && data.studentId.size() < 100 &&
+             data.subjectId is string && data.subjectId.size() < 100 &&
+             data.status in ['pending', 'approved', 'rejected'] &&
+             (!('studentName' in data) || (data.studentName is string && data.studentName.size() < 100)) &&
+             (!('subjectCode' in data) || (data.subjectCode is string && data.subjectCode.size() < 20)) &&
+             (!('subjectName' in data) || (data.subjectName is string && data.subjectName.size() < 100));
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isOwner(userId) && isValidUser(request.resource.data) && (request.resource.data.role == 'student' || isAdmin());
+      allow update: if isOwner(userId) && isValidUser(request.resource.data) && (request.resource.data.role == resource.data.role || isAdmin());
+    }
+
+    match /subjects/{subjectId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin() && isValidSubject(request.resource.data);
+    }
+
+    match /registrations/{registrationId} {
+      allow read: if isAuthenticated() && (isOwner(resource.data.studentId) || isAdmin());
+      allow create: if isAuthenticated() && isOwner(request.resource.data.studentId) && isValidRegistration(request.resource.data);
+      allow update: if isAdmin() && isValidRegistration(request.resource.data);
+      allow delete: if isAdmin() || (isAuthenticated() && isOwner(resource.data.studentId) && resource.data.status == 'pending');
+    }
+  }
+}

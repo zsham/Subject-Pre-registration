@@ -136,6 +136,7 @@ export default function App() {
   const [registrations, setRegistrations] = useState<Registration[]>([]);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'subjects' | 'my-registrations' | 'admin-panel'>('dashboard');
   const [isAddingSubject, setIsAddingSubject] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
 
   // Error handling utility
   const handleFirestoreError = (error: unknown, operationType: OperationType, path: string | null) => {
@@ -169,15 +170,25 @@ export default function App() {
       if (currentUser) {
         try {
           const profileDoc = await getDoc(doc(db, 'users', currentUser.uid));
+          const isAdminEmail = currentUser.email === "tomyagung@gmail.com";
+          
           if (profileDoc.exists()) {
-            setProfile(profileDoc.data() as UserProfile);
+            const existingProfile = profileDoc.data() as UserProfile;
+            // If it's the admin email but role is student, upgrade it
+            if (isAdminEmail && existingProfile.role === 'student') {
+              const updatedProfile = { ...existingProfile, role: 'admin' as const };
+              await updateDoc(doc(db, 'users', currentUser.uid), { role: 'admin' });
+              setProfile(updatedProfile);
+            } else {
+              setProfile(existingProfile);
+            }
           } else {
-            // Default to student role for new users
+            // Create new profile with appropriate role
             const newProfile: UserProfile = {
               uid: currentUser.uid,
               email: currentUser.email || '',
               displayName: currentUser.displayName || 'Anonymous',
-              role: 'student'
+              role: isAdminEmail ? 'admin' : 'student'
             };
             await setDoc(doc(db, 'users', currentUser.uid), newProfile);
             setProfile(newProfile);
@@ -207,11 +218,13 @@ export default function App() {
   }, []);
 
   const handleLogin = async () => {
+    setLoginError(null);
     const provider = new GoogleAuthProvider();
     try {
       await signInWithPopup(auth, provider);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Login failed:", error);
+      setLoginError(error.message || "Login failed. Please try again.");
     }
   };
 
@@ -362,10 +375,22 @@ export default function App() {
             <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-6 h-6" alt="Google" />
             Sign in with Student ID
           </button>
+
+          {loginError && (
+            <div className="p-3 bg-red-50 text-red-600 rounded-xl text-sm flex items-center gap-2">
+              <AlertCircle size={16} />
+              <span>{loginError}</span>
+            </div>
+          )}
           
-          <p className="text-xs text-gray-500 font-sans">
-            Access restricted to authorized students and faculty.
-          </p>
+          <div className="space-y-4">
+            <p className="text-xs text-gray-500 font-sans">
+              Access restricted to authorized students and faculty.
+            </p>
+            <p className="text-xs text-[#5A5A40] font-sans bg-white/50 p-2 rounded-lg border border-[#5A5A40]/10">
+              Tip: If the login popup doesn't appear, try opening the app in a <strong>new tab</strong>.
+            </p>
+          </div>
         </motion.div>
       </div>
     );
